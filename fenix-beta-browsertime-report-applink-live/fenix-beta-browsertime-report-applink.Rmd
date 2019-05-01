@@ -1,0 +1,409 @@
+---
+title: "browsertime: live applink coldload, Chrome 74 vs GVE 68 vs Fenix 68 vs Fennec 64 on the Pixel 2 (and Moto G5, XXX)"
+author: Nick Alexander
+date: May 1, 2019
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+    includes:
+      in_header: "html/header.html"
+---
+
+<style>
+select {
+    width: 30%;
+    right: 10px;
+    height: 30px;
+}
+</style>
+
+```{r setup, include=FALSE}
+library(glue)
+library(dplyr)
+library(DT)
+library(ggplot2)
+library(stringr)
+library(tidyr)
+
+btr <- read.csv('data/applink.csv')
+by_site <- btr %>%
+  # filter(proxy == 'replay') %>%
+  # select(-proxy) %>%
+  filter(run == 2) %>% # XXX
+  select(-timestamp, -engine)
+by_site$run = as.factor(by_site$run)
+by_site$proxy = as.factor(by_site$proxy)
+by_site$test_type = as.factor(by_site$test_type)
+
+# We're not really interested in GVE: it measures Fenix-specific overhead, but GVE doesn't have TP enabled so it's not a direct comparison to Fenix.
+# by_site <- by_site %>%
+#  filter(vehicle != 'GVE 68')
+
+# Ordering the vehicle factor in this way makes the dot-plot below generally "follow what we want": Fenix is fastest, Fennec is next, Chrome is slowest.
+by_site$vehicle <- factor(by_site$vehicle, levels=c("Fenix 68",
+                                                    "GVE 68",
+                                                    "Fennec 64",
+                                                    "Chrome 74"))
+
+# Set up fixed color mapping for the different vehicles.  See https://stackoverflow.com/a/6920045.
+library(RColorBrewer)
+myColors <- brewer.pal(4, "Set1")[c(3, 2, 1, 4)] # Fenix=green, GVE=blue, Fennec=red, Chrome=purple.
+names(myColors) <- levels(by_site$vehicle)
+colScale <- scale_colour_manual(name = "vehicle", values = myColors)
+fillScale <- scale_fill_manual(name = "vehicle", values = myColors)
+
+shapeScale <- scale_shape_manual(name = "proxy", values=c(20, 18))
+
+# Some sites have outliers that distort the scales.  Drop them for now.
+bad_sites = c("bbc.") # co.uk")
+for (bad_site in bad_sites) {
+  by_site <- by_site %>%
+    filter(!grepl(bad_site, site, fixed=TRUE));
+}
+
+runs <- data.frame(run = factor(c(1, 2, 3)),
+                   device = factor(c("Pixel 2", "Pixel 2", "Pixel 2")),
+                   iterations = c(5, 5, 2),
+                   min_iterations = c(4, 4, 2))
+
+with_min_iterations <- by_site %>%
+  group_by(run, device, site, vehicle) %>%
+  summarise(num_iterations=n()) %>%
+  ungroup() %>%
+  group_by(run, device, site) %>%
+  # This ensures that every "vehicle" has 0 if there were no runs recorded for that vehicle configuration.
+  spread(vehicle, num_iterations, fill = 0) %>%
+  gather("vehicle", num_iterations, levels(by_site$vehicle)) %>%
+  ungroup() %>%
+  group_by(run, device, site) %>%
+  summarise(min_iterations=min(num_iterations)) %>%
+  ungroup()
+
+# Each (run, device, site) that has sufficient data to draw conclusions.
+sufficient <- left_join(with_min_iterations, runs %>% select(-iterations), by = c("run", "device")) %>%
+  filter(min_iterations.x >= min_iterations.y) %>%
+  select(run, device, site)
+
+insufficient <- left_join(with_min_iterations, runs %>% select(-iterations), by = c("run", "device")) %>%
+  filter(min_iterations.x < min_iterations.y)
+
+# The measurements corresponding to (run, device, site) tuples with sufficient data.
+complete <- semi_join(by_site, sufficient, by = c("run", "device", "site"))
+
+complete <- complete %>%
+  group_by(device, run, site) %>%
+  summarize(m=mean(pageLoadTime)) %>%
+  ungroup() %>%
+  arrange(m) %>%
+  inner_join(complete, by=c('device', 'run', 'site'))
+
+complete_sites <- complete %>% select(site) %>% distinct()
+sites <- by_site %>% select(site) %>% distinct()
+incomplete_sites <- setdiff(sites, complete_sites)
+
+complete$site <- sub('https://', '', complete$site)
+complete$site <- sub('http://', '', complete$site)
+complete$site <- complete$site %>% str_trunc(30) %>% str_pad(30, 'right')
+```
+
+## Methodology
+
+### Test harness
+
+The data were collected using an ad-hoc Python harness driving the
+browsertime testing suite.  The harness is [still under
+development](https://hg.mozilla.org/users/nalexander_mozilla.com/gecko/rev/face4e993f959724fe86b302987091666e3193cd)
+but will eventually be published and development is tracked by [Bug
+1545627](https://bugzilla.mozilla.org/show_bug.cgi?id=1545627).
+
+browsertime drives the underlying vehicles using Web Driver
+automation; for WebView this means `chromedriver` driving the engine
+via the Chrome Debug Protocol and for GeckoView this means
+`geckodriver` driving the engine over the Marionette protocol.
+
+The version of browsertime used was lightly modified to support
+Android-specific WebView engine configuration and to support the
+GeckoView engine.  None of these modifications are believed to impact
+engine performance.
+
+The version of `geckodriver` was heavily modified to support the
+GeckoView engine over the `adb` TCP/IP protocol.  These modifications
+principally concern launching the target vehicle and connecting to the
+underlying protocol handler; any impact on engine performance has to
+do with servicing the underlying protocol and ambient engine
+configuration (for example, custom profiles in GeckoView).
+
+The version of `chromedriver` was manually patched to support
+measuring applinks.  This required making two strings be empty in
+order to change the `am start ...` invocation and in order to exploit
+a further unsanitized string substitution.  A version of
+`chromedriver` could have been compiled for this purpose, but the
+Chromium build system is not easy to work with and this approach was
+surprisingly simple.
+
+### Vehicles tested
+
+The data were collected from the following vehicle configurations:
+
+| vehicle | engine | Tracking Protection |
+| --- | --- | --- |
+| Fenix 68 | GeckoView | enabled |
+| geckoview_example 68 (GVE) | GeckoView | disabled |
+| Fennec 64 | GeckoView | N/A |
+| Chrome 74 | Blink | N/A |
+
+### Sites tested
+
+The sites were taken from the [product mobile
+corpus](https://docs.google.com/spreadsheets/d/1wqGfLaEKVDjfA-y4gZfcFRtjU3G0HzOxlcFTMlJGEJw/edit?ts=5bdb67e1#gid=596602279)
+were tested.  The sites not tested were:
+
+| site | reason |
+| --- | --- |
+| https://www.allrecipes.com/ | live load failures |
+| https://www.allrecipes.com/recipe/16485/barbs-broccoli-cauliflower-salad/?internalSource=hub%20recipe&referringContentType=Search | live load failures |
+
+Some sites witnessed transient network errors: in these cases the
+number of recorded measurements is fewer than expected.  In any
+individual run, no site was measured fewer than 4 times.
+
+The entire corpus was tested end-to-end twice in succession on a
+single Pixel 2 and a single Moto G5.
+
+### Single site test
+
+For each site, the four vehicle configurations were tested using a
+customized version of browsertime that starts the vehicle with an
+Android Intent with `-a android.intent.action.VIEW -d $URL` and that
+measures the process start time (in milliseconds after the epoch) and
+the time that the engine reports starting the top-level navigation (in
+milliseconds after the epoch).
+
+The process start time in milliseconds after the epoch was determined
+by inspecting `/proc/${PID}/stat` for the relevant process ID.  There
+is some noise in this measurement (generally less than 10ms) so three
+readings were averaged and rounded to the nearest millisecond.  The
+calculations can be found (as browsertime modifications)
+[here](https://github.com/ncalexan/browsertime/blob/4f8738e2225b3298556308c0d8c916d3b22e9741/lib/android/index.js#L100).
+
+The engine's navigation start time origin is commensurable with the
+process start time.
+
+browsertime reports a wide range of timings, mostly from the
+[Performance Navigation Timing
+API](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceNavigationTiming),
+and the customized version of browsertime produces these as timings
+relative to the process start time; see
+[here](https://hg.mozilla.org/users/nalexander_mozilla.com/gecko/file/face4e993f959724fe86b302987091666e3193cd/testing/perftest/vendor/browsertime_applink.js#l16).
+
+Schematically:
+
+1. `am start ... -a android.intent.action.VIEW $URL`
+
+1. `/proc/${PID}/stat` to get `processStartTime`
+
+1. `browsertime` to get `window.performance.timeOrigin` and
+`navigationStartTime`
+
+1. Calculations to determine time to applink coldload:
+`navigationStartTime` - `processStartTime` + `loadEventEnd`
+
+## Fenix 68 applink is significantly faster than Fennec 64
+
+Fenix 68 applink is significantly faster than Fennec 64, but still lags Chrome.  Ignoring GVE, the following graph gives insight into how the vehicles compare on the sites in the test corpus for each run with live sites:
+
+```{r, echo=FALSE, fig.width = 12, fig.height=12}
+xx <- complete %>%
+  filter(proxy == 'live') %>%
+  filter(vehicle != 'GVE 68')
+p <- ggplot(xx, aes(x=reorder(site, m), y=pageLoadTime)) + colScale
+p <- p + geom_point(aes(color=vehicle), position=position_dodge(0.5))
+p <- p + facet_wrap(vars(device, run), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE)) + theme(axis.text.x=element_text(angle=-67.5, hjust=0, vjust=0)) + xlab('site')
+p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
+p
+```
+
+We see a nice win for Fenix 68 vs Fennec 64 across the board.
+
+### Per-vehicle navigationStartTime: GeckoView lags Chrome; engines are consistent across sites
+
+Within a particular vehicle on a particular device, the time from process start until the underlying engine reports that the applink top-level navigation has started is remarkably consistent across sites.  This time is essentially the "engine initialization time", and it's clear that Gecko is significantly slower than Chrome.
+
+```{r, echo=FALSE, fig.width = 8, fig.height=8}
+xx <- complete %>%
+  filter(proxy == 'live') %>%
+  group_by(run, device, vehicle)
+p <- ggplot(xx, aes(x=vehicle, y=navigationStartTime)) + colScale
+p <- p + geom_boxplot(aes(fill=vehicle), alpha=0.5) + fillScale
+p <- p + geom_jitter(aes(color=vehicle), width=0.1, size=0.1)
+p <- p + facet_wrap(vars(device), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE))
+p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
+p
+```
+
+At this time, it is not clear why Fenix is *faster* than GVE to `navigationStartTime`.
+
+### Comparison across sites
+
+Especially for the faster sites -- those that look like landing pages -- Gecko is loading sites almost as quickly as is Chrome, but the time to navigation start makes Chrome a clear winner.  In the visual below, the median page load time is wide and stacked on the bottom, and the median time to navigation start is thin and stacked on the top.  Sites like web.de clearly show Gecko and Chrome loading the page similarly but Fenix suffering from the GeckoView startup time.
+
+```{r, echo=FALSE, fig.width = 12, fig.height=12}
+xx <- complete %>%
+  filter(proxy == 'live') %>%
+  filter(vehicle != 'GVE 68')
+p <- ggplot(xx, aes(x=reorder(site, m))) + colScale
+p <- p + geom_bar(aes(fill=vehicle, y=pageLoadTime - navigationStartTime), position=position_dodge(0.6), stat="summary", fun.y = "median", width=0.6, alpha=0.5) + fillScale
+p <- p + geom_bar(aes(fill=vehicle, y=pageLoadTime), position=position_dodge(0.6), stat="summary", fun.y = "median", width=0.3)
+p <- p + facet_wrap(vars(device, run), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE)) + theme(axis.text.x=element_text(angle=-67.5, hjust=0, vjust=0)) + xlab('site')
+p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
+p
+```
+
+## Fenix 68 vs Fennec 64
+
+Restricted to live sites.
+
+```{r, echo=FALSE, fig.width = 12, fig.height=12}
+xx <- complete %>%
+  filter(proxy == 'live') %>%
+  filter(vehicle %in% c("Fenix 68", "Fennec 64"))
+
+p <- ggplot(xx, aes(x=reorder(site, m), y=pageLoadTime)) + colScale
+p <- p + geom_point(aes(colour=vehicle, group=paste(as.integer(vehicle), run)), position=position_dodge(0.5))
+p <- p + facet_wrap(vars(device, proxy), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE)) + theme(axis.text.x=element_text(angle=-67.5, hjust=0, vjust=0)) + xlab('site')
+p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
+p
+```
+
+## Fenix 68 vs Chrome 74
+
+Restricted to live sites.
+
+```{r, echo=FALSE, fig.width = 12, fig.height=12}
+xx <- complete %>%
+  filter(proxy == 'live') %>%
+  filter(vehicle %in% c("Fenix 68", "Chrome 74"))
+p <- ggplot(xx, aes(x=reorder(site, m), y=pageLoadTime)) + colScale
+p <- p + geom_point(aes(color=vehicle, group=paste(as.integer(vehicle), run)), position=position_dodge(0.5)) + shapeScale
+p <- p + facet_wrap(vars(device, proxy), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE)) + theme(axis.text.x=element_text(angle=-67.5, hjust=0, vjust=0)) + xlab('site')
+p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
+p
+```
+
+Here is the data in tabular form.
+
+```{r g_over_c, echo=FALSE}
+g_over_c <- complete %>%
+  filter(vehicle %in% c("Fenix 68", "Chrome 74")) %>%
+  group_by(run, device, site, vehicle) %>%
+  summarise(pageLoadTime_mean=round(mean(pageLoadTime))) %>%
+  ungroup() %>%
+  group_by(run, device, site) %>%
+  spread(vehicle, pageLoadTime_mean) %>%
+  ungroup()
+
+g_over_c$`ratio` = g_over_c$`Fenix 68` / g_over_c$`Chrome 74`
+
+datatable(arrange(g_over_c, ratio), options=list(dom='t', pageLength = nrow(g_over_c)),
+          fillContainer = FALSE,
+          caption=('Fenix applink pageload over Chrome applink pageload (lower is better)' %>% glue())) %>%
+  # formatRound(c("Fenix 68", "Chrome 74"), 2) %>%
+  formatPercentage(c("ratio"))
+```
+
+## Conclusions
+
+1. **A Quantum Flow-like startup performance effort is needed.**  If Chrome can start navigating in less than 0.5s, so can we!
+
+1. Since the particular site makes almost no difference to the `navigationStartTime`, meaning that a few (or even one) representative site(s) is sufficient to measure and track regressions in the applink load time.  That will reduce the automation cost for regression testing.
+
+## Results
+
+### Raw data
+
+The data collected for the following tests is available:
+
+| run | device | folder |
+| --- | --- | --- |
+| 1 | Pixel 2 | XXX |
+
+### Processed data
+
+The data from the test runs above can be found in the following [CSV
+file](data/applink.csv).  The columns of the CSV are as follows:
+
+| column | description |
+| --- | --- |
+`device` | the target device, one of "Pixel 2", "Moto G5" |
+| `run` | the test run number |
+| `site` | the URL of the page being loaded |
+| `engine` | the tested engine's User Agent string |
+| `proxy` | "live" to signify the site was loaded from the live network |
+| `timestamp` | the local timestamp when the pageload was initiated |
+| `navigationStartTime` | the `window.performance.timeOrigin` reported by the engine under test, measured from the main process start time |
+| `pageLoadTime` | the [`loadEventStart`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceNavigationTiming/loadEventStart) timestamp reported by the engine under test, measured from the main process start time |
+
+## Inter-vehicle reliability
+
+### Network weather and live site differences
+
+No record and replay proxy was used to minimize the impact of network
+weather.
+
+Some of the sites serve dynamic content and/or advertisements.  This
+means that between individual tests, the underlying network archives
+may have changed significantly.
+
+### Gecko profile conditioning
+
+It is well known that the Gecko profile significantly impacts the
+performance of the Gecko engine: preferences, certificate databases,
+and the network cache itself can have major impacts on measurements.
+
+To minimize volatility, for each GeckoView-based vehicle
+configuration, a Gecko profile was conditioned as follows:
+
+1. A profile template (with `cert9.db` and `key4.db` containing the
+custom CA certificate used by proxies) was produced.
+
+1. This profile template was copied to the target device, and the
+vehicle was started from a cleared state with this profile.
+
+1. The single page `https://example.com` was visited.
+
+1. The vehicle was left idle for 2 minutes.
+
+1. The vehicle was force-stopped and the conditioned profile
+retrieved from the device.
+
+This conditioned profile was then copied to the device at the
+beginning of every test run: that is, every applink cold pageload
+started with exactly the same Gecko profile.
+
+The code that implements this profile conditioning can be found
+[here](https://hg.mozilla.org/users/nalexander_mozilla.com/gecko/file/face4e993f959724fe86b302987091666e3193cd/testing/perftest/perftest/condition.py).
+
+## Versions
+
+### Device versions
+
+The output of `adb shell getprop` for each device is available:
+
+| device |
+| --- |
+| [Pixel 2](Pixel 2.getprop) |
+| [Moto G5](Moto G5.getprop XXX) |
+
+### Software versions
+
+| package | version (* denotes modified) | link |
+| ------- | --- | --- |
+| browsertime | 4.7.0 (*) | https://github.com/ncalexan/browsertime/tarball/4f8738e2225b3298556308c0d8c916d3b22e9741 |
+| chromedriver| 2.46 (*) | https://chromedriver.storage.googleapis.com/index.html?path=2.46/ |
+| geckodriver | 0.40.0 (*) | https://hg.mozilla.org/users/nalexander_mozilla.com/gecko/rev/e7f1d26dec97a4a26c61b8e18dfe769d4c11e096 |
+| Fenix | 1.0.1917 | https://queue.taskcluster.net/v1/task/TujyjjJqSoqeSVykLTjdmA/artifacts/public%2Ftarget.apk |
+| geckoview_example | N/A | https://queue.taskcluster.net/v1/task/EbHvScwDQBWnoYHJRwZphQ/artifacts/public%2Fbuild%2Fgeckoview_example.apk |
+| Fennec | 64.0.2 | http://archive.mozilla.org/pub/mobile/releases/64.0.2/android-api-16/multi/fennec-64.0.2.multi.android-arm.apk |
+| Chrome | 74.0.3729.112 | N/A |
