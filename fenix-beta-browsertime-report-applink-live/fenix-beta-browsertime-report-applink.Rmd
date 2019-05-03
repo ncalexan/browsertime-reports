@@ -232,13 +232,19 @@ We see a nice win for Fenix 68 vs Fennec 64 across the board.
 Within a particular vehicle on a particular device, the time from process start until the underlying engine reports that the applink top-level navigation has started is remarkably consistent across sites.  This time is essentially the "engine initialization time", and it's clear that Gecko is significantly slower than Chrome.
 
 ```{r, echo=FALSE, fig.width = 8, fig.height=8}
+
+fun_mean <- function(x){
+  return(data.frame(y=mean(x),label=round(mean(x,na.rm=T))))}
+
+
 xx <- complete %>%
   filter(proxy == 'live') %>%
   group_by(run, device, vehicle)
 p <- ggplot(xx, aes(x=vehicle, y=navigationStartTime)) + colScale
 p <- p + geom_boxplot(aes(fill=vehicle), alpha=0.5) + fillScale
 p <- p + geom_jitter(aes(color=vehicle), width=0.1, size=0.1)
-p <- p + facet_wrap(vars(device), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE))
+p <- p + stat_summary(fun.data = fun_mean, geom="text", hjust=5.5, vjust=-1)
+p <- p + facet_wrap(vars(device, run), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE))
 p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
 p
 ```
