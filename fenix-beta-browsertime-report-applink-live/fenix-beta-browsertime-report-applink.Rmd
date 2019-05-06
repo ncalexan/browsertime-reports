@@ -62,10 +62,10 @@ for (bad_site in bad_sites) {
     filter(!grepl(bad_site, site, fixed=TRUE));
 }
 
-runs <- data.frame(run = factor(c(1, 2, 3)),
-                   device = factor(c("Moto G5", "Pixel 2", "Pixel 2")),
-                   iterations = c(5, 5, 5),
-                   min_iterations = c(4, 4, 4))
+runs <- data.frame(run = factor(c(1, 2, 3, 4)),
+                   device = factor(c("Moto G5", "Moto G5", "Pixel 2", "Pixel 2")),
+                   iterations = c(5, 5, 5, 5),
+                   min_iterations = c(4, 4, 4, 4))
 
 with_min_iterations <- by_site %>%
   group_by(run, device, site, vehicle) %>%
@@ -219,7 +219,7 @@ xx <- complete %>%
   filter(vehicle != 'GVE 68')
 p <- ggplot(xx, aes(x=reorder(site, m), y=pageLoadTime)) + colScale
 p <- p + geom_point(aes(color=vehicle), position=position_dodge(0.5))
-p <- p + facet_wrap(vars(device, run), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE)) + theme(axis.text.x=element_text(angle=-67.5, hjust=0, vjust=0)) + xlab('site')
+p <- p + facet_wrap(vars(device), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE)) + theme(axis.text.x=element_text(angle=-67.5, hjust=0, vjust=0)) + xlab('site')
 p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
 p
 ```
@@ -240,10 +240,10 @@ xx <- complete %>%
   filter(proxy == 'live') %>%
   group_by(run, device, vehicle)
 p <- ggplot(xx, aes(x=vehicle, y=navigationStartTime)) + colScale
-p <- p + geom_boxplot(aes(fill=vehicle), alpha=0.5) + fillScale
-p <- p + geom_jitter(aes(color=vehicle), width=0.1, size=0.1)
+p <- p + geom_boxplot(aes(fill=vehicle, group=paste(as.integer(vehicle), run)), alpha=0.5) + fillScale
+p <- p + geom_jitter(aes(color=vehicle, group=paste(as.integer(vehicle), run)), width=0.1, size=0.1)
 p <- p + stat_summary(fun.data = fun_mean, geom="text", hjust=5.5, vjust=-1)
-p <- p + facet_wrap(vars(device, run), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE))
+p <- p + facet_wrap(vars(device), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE))
 p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
 p
 ```
