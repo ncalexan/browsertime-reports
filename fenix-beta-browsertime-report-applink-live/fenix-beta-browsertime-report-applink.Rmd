@@ -297,6 +297,20 @@ p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
 p
 ```
 
+## Fenix 68 vs GVE 68
+
+Restricted to live sites.
+
+```{r, echo=FALSE, fig.width = 12, fig.height=12}
+xx <- complete %>%
+  filter(proxy == 'live') %>%
+  filter(vehicle %in% c("Fenix 68", "GVE 68", "Chrome 74"))
+p <- ggplot(xx, aes(x=reorder(site, m), y=pageLoadTime)) + colScale
+p <- p + geom_point(aes(color=vehicle, group=paste(as.integer(vehicle), run)), position=position_dodge(0.5)) + shapeScale
+p <- p + facet_wrap(vars(device, proxy), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE)) + theme(axis.text.x=element_text(angle=-67.5, hjust=0, vjust=0)) + xlab('site')
+p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
+p
+```
 Here is the data in tabular form.
 
 ```{r g_over_c, echo=FALSE}
