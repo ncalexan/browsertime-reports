@@ -302,7 +302,7 @@ p
 
 At this time, it is not clear why Fenix is *faster* than GVE to `navigationStartTime`.
 
-### Fenix 68 vs Fennec 64
+### Fenix 68 vs Fennec 64: better than before
 
 We see a nice win for Fenix 68 vs Fennec 64 across the board.
 
@@ -318,7 +318,7 @@ p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
 p
 ```
 
-### Fenix 68 vs Chrome 74
+### Fenix 68 vs Chrome 74: losing today
 
 Fenix 68 lags Chrome 74 across the board.  The startup overhead is so bad that the set of sites where tracking protection dramatically improves pageload time (as measured by firing the load event) is greatly reduced: it's only the worst offenders -- the buzzfeeds of the world -- where tracking protection can still shine.
 
@@ -333,7 +333,7 @@ p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
 p
 ```
 
-### Fenix 68 vs GVE 68
+### Fenix 68 vs GVE 68: the impact of tracking protection
 
 Fenix 68 vs GVE 68 is a good proxy for the impact of tracking protection.
 
