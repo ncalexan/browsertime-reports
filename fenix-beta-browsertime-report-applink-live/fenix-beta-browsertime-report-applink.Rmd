@@ -1,5 +1,5 @@
 ---
-title: "browsertime: live applink coldload, Chrome 74 vs GVE 68 vs Fenix 68 vs Fennec 64 on the Pixel 2 (and Moto G5, XXX)"
+title: "browsertime: live applink coldload, Chrome 74 vs GVE 68 vs Fenix 68 vs Fennec 64 on the Pixel 2 and Moto G5"
 author: Nick Alexander
 date: May 1, 2019
 output:
@@ -26,6 +26,7 @@ library(DT)
 library(ggplot2)
 library(stringr)
 library(tidyr)
+library(EnvStats) # For `geoMean`.
 
 btr <- read.csv('data/applink.csv')
 by_site <- btr %>%
@@ -107,6 +108,58 @@ complete$site <- sub('http://', '', complete$site)
 complete$site <- complete$site %>% str_trunc(30) %>% str_pad(30, 'right')
 ```
 
+## tl;dr
+
+This report summarizes data for the *applink* scenario: tapping a link in a third-party App (say, your mail client) and measuring the time that it takes Fenix to start, render the page, and fire the [`load` event](https://developer.mozilla.org/en-US/docs/Web/API/Window/load_event).  The times reported capture the time for the engine (GeckoView or Blink) to start and to complete pageload.
+
+1. **A Quantum Flow-like startup performance effort to speed up
+GeckoView startup is needed.** Chrome starts navigating in less than
+0.5s, and so can we!
+
+1. The particular site makes almost no difference to the engine
+startup overhead , meaning that a few (or even one) representative
+site(s) is sufficient to measure and track regressions in the applink
+load time.  That will reduce the automation cost for regression
+testing.
+
+### Geometric means
+
+The applink geometric means show that Fenix 68 takes roughly half as long as Fennec 64 to get to the `load` event, but takes more than one-and-a-half times as long as Chrome 74:
+
+```{r, echo=FALSE}
+geomeans <- complete %>%
+  group_by(device, vehicle) %>%
+  summarize(pageLoadTime=geoMean(pageLoadTime)) %>%
+  ungroup()
+
+xx <- geomeans %>% group_by(device) %>% spread(vehicle, pageLoadTime)
+
+geomean_ratios <- xx %>% select(device)
+geomean_ratios$f68_over_f64 <- xx$`Fenix 68` / xx$`Fennec 64`
+geomean_ratios$f68_over_c74 <- xx$`Fenix 68` / xx$`Chrome 74`
+
+datatable(arrange(geomean_ratios, device, f68_over_f64), options=list(dom='t', pageLength = nrow(geomean_ratios)),
+          colnames = c('Fenix 68 over Fennec 64' = 'f68_over_f64',
+                       'Fenix 68 over Chrome 74' = 'f68_over_c74'),
+          fillContainer = FALSE,
+          caption=('Applink pageload geomean ratios across sites (lower is better)' %>% glue())) %>%
+  # formatRound(c("pageLoadTime"), 0)
+  formatPercentage(c("Fenix 68 over Fennec 64")) %>%
+  formatPercentage(c("Fenix 68 over Chrome 74"))
+```
+
+Here are the applink geomeans:
+
+```{r, echo=FALSE}
+datatable(arrange(geomeans, device, vehicle), options=list(dom='t', pageLength = nrow(geomeans)),
+          colnames = c('pageLoadTime (ms)' = 'pageLoadTime'),
+          fillContainer = FALSE,
+          caption=('Applink pageload geomeans across sites (lower is better)' %>% glue())) %>%
+  # formatRound(c("Fenix 68", "Chrome 74"), 2) %>%
+  formatRound(c("pageLoadTime (ms)"), 0)
+  # formatPercentage(c("pageLoadTime"))
+```
+
 ## Methodology
 
 ### Test harness
@@ -153,24 +206,6 @@ The data were collected from the following vehicle configurations:
 | Fennec 64 | GeckoView | N/A |
 | Chrome 74 | Blink | N/A |
 
-### Sites tested
-
-The sites were taken from the [product mobile
-corpus](https://docs.google.com/spreadsheets/d/1wqGfLaEKVDjfA-y4gZfcFRtjU3G0HzOxlcFTMlJGEJw/edit?ts=5bdb67e1#gid=596602279)
-were tested.  The sites not tested were:
-
-| site | reason |
-| --- | --- |
-| https://www.allrecipes.com/ | live load failures |
-| https://www.allrecipes.com/recipe/16485/barbs-broccoli-cauliflower-salad/?internalSource=hub%20recipe&referringContentType=Search | live load failures |
-
-Some sites witnessed transient network errors: in these cases the
-number of recorded measurements is fewer than expected.  In any
-individual run, no site was measured fewer than 4 times.
-
-The entire corpus was tested end-to-end twice in succession on a
-single Pixel 2 and a single Moto G5.
-
 ### Single site test
 
 For each site, the four vehicle configurations were tested using a
@@ -207,9 +242,29 @@ Schematically:
 `navigationStartTime`
 
 1. Calculations to determine time to applink coldload:
-`navigationStartTime` - `processStartTime` + `loadEventEnd`
+`navigationStartTime` - `processStartTime` + `loadEventStart`
 
-## Fenix 68 applink is significantly faster than Fennec 64
+### Sites tested
+
+The sites were taken from the [product mobile
+corpus](https://docs.google.com/spreadsheets/d/1wqGfLaEKVDjfA-y4gZfcFRtjU3G0HzOxlcFTMlJGEJw/edit?ts=5bdb67e1#gid=596602279)
+were tested.  The sites not tested were:
+
+| site | reason |
+| --- | --- |
+| https://www.allrecipes.com/ | live load failures |
+| https://www.allrecipes.com/recipe/16485/barbs-broccoli-cauliflower-salad/?internalSource=hub%20recipe&referringContentType=Search | live load failures |
+
+Some sites witnessed transient network errors: in these cases the
+number of recorded measurements is fewer than expected.  In any
+individual run, no site was measured fewer than 4 times.
+
+The entire corpus was tested end-to-end twice in succession on a
+single Pixel 2 and a single Moto G5.
+
+## Results
+
+### Fenix 68 applink is significantly faster than Fennec 64
 
 Fenix 68 applink is significantly faster than Fennec 64, but still lags Chrome.  Ignoring GVE, the following graph gives insight into how the vehicles compare on the sites in the test corpus for each run with live sites:
 
@@ -224,9 +279,7 @@ p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
 p
 ```
 
-We see a nice win for Fenix 68 vs Fennec 64 across the board.
-
-### Per-vehicle navigationStartTime: GeckoView lags Chrome; engines are consistent across sites
+### GeckoView takes longer to start than Chrome; all engines are consistent across sites
 
 Within a particular vehicle on a particular device, the time from process start until the underlying engine reports that the applink top-level navigation has started is remarkably consistent across sites.  This time is essentially the "engine initialization time", and it's clear that Gecko is significantly slower than Chrome.
 
@@ -235,14 +288,13 @@ Within a particular vehicle on a particular device, the time from process start 
 fun_mean <- function(x){
   return(data.frame(y=mean(x),label=round(mean(x,na.rm=T))))}
 
-
 xx <- complete %>%
   filter(proxy == 'live') %>%
   group_by(run, device, vehicle)
 p <- ggplot(xx, aes(x=vehicle, y=navigationStartTime)) + colScale
 p <- p + geom_boxplot(aes(fill=vehicle, group=paste(as.integer(vehicle), run)), alpha=0.5) + fillScale
 p <- p + geom_jitter(aes(color=vehicle, group=paste(as.integer(vehicle), run)), width=0.1, size=0.1)
-p <- p + stat_summary(fun.data = fun_mean, geom="text", hjust=5.5, vjust=-1)
+p <- p + stat_summary(fun.data = fun_mean, geom="text", hjust=3.5, vjust=-3)
 p <- p + facet_wrap(vars(device), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE))
 p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
 p
@@ -250,25 +302,9 @@ p
 
 At this time, it is not clear why Fenix is *faster* than GVE to `navigationStartTime`.
 
-### Comparison across sites
+### Fenix 68 vs Fennec 64
 
-Especially for the faster sites -- those that look like landing pages -- Gecko is loading sites almost as quickly as is Chrome, but the time to navigation start makes Chrome a clear winner.  In the visual below, the median page load time is wide and stacked on the bottom, and the median time to navigation start is thin and stacked on the top.  Sites like web.de clearly show Gecko and Chrome loading the page similarly but Fenix suffering from the GeckoView startup time.
-
-```{r, echo=FALSE, fig.width = 12, fig.height=12}
-xx <- complete %>%
-  filter(proxy == 'live') %>%
-  filter(vehicle != 'GVE 68')
-p <- ggplot(xx, aes(x=reorder(site, m))) + colScale
-p <- p + geom_bar(aes(fill=vehicle, y=pageLoadTime - navigationStartTime), position=position_dodge(0.6), stat="summary", fun.y = "median", width=0.6, alpha=0.5) + fillScale
-p <- p + geom_bar(aes(fill=vehicle, y=pageLoadTime), position=position_dodge(0.6), stat="summary", fun.y = "median", width=0.3)
-p <- p + facet_wrap(vars(device, run), ncol=1, scales='fixed', labeller=labeller(.multi_line=FALSE)) + theme(axis.text.x=element_text(angle=-67.5, hjust=0, vjust=0)) + xlab('site')
-p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
-p
-```
-
-## Fenix 68 vs Fennec 64
-
-Restricted to live sites.
+We see a nice win for Fenix 68 vs Fennec 64 across the board.
 
 ```{r, echo=FALSE, fig.width = 12, fig.height=12}
 xx <- complete %>%
@@ -282,9 +318,9 @@ p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
 p
 ```
 
-## Fenix 68 vs Chrome 74
+### Fenix 68 vs Chrome 74
 
-Restricted to live sites.
+Fenix 68 lags Chrome 74 across the board.  The startup overhead is so bad that the set of sites where tracking protection dramatically improves pageload time (as measured by firing the load event) is greatly reduced: it's only the worst offenders -- the buzzfeeds of the world -- where tracking protection can still shine.
 
 ```{r, echo=FALSE, fig.width = 12, fig.height=12}
 xx <- complete %>%
@@ -297,9 +333,9 @@ p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
 p
 ```
 
-## Fenix 68 vs GVE 68
+### Fenix 68 vs GVE 68
 
-Restricted to live sites.
+Fenix 68 vs GVE 68 is a good proxy for the impact of tracking protection.
 
 ```{r, echo=FALSE, fig.width = 12, fig.height=12}
 xx <- complete %>%
@@ -311,58 +347,6 @@ p <- p + facet_wrap(vars(device, proxy), ncol=1, scales='fixed', labeller=labell
 p <- p + theme(legend.justification = c(0, 1), legend.position = c(0.04, 0.995))
 p
 ```
-Here is the data in tabular form.
-
-```{r g_over_c, echo=FALSE}
-g_over_c <- complete %>%
-  filter(vehicle %in% c("Fenix 68", "Chrome 74")) %>%
-  group_by(run, device, site, vehicle) %>%
-  summarise(pageLoadTime_mean=round(mean(pageLoadTime))) %>%
-  ungroup() %>%
-  group_by(run, device, site) %>%
-  spread(vehicle, pageLoadTime_mean) %>%
-  ungroup()
-
-g_over_c$`ratio` = g_over_c$`Fenix 68` / g_over_c$`Chrome 74`
-
-datatable(arrange(g_over_c, ratio), options=list(dom='t', pageLength = nrow(g_over_c)),
-          fillContainer = FALSE,
-          caption=('Fenix applink pageload over Chrome applink pageload (lower is better)' %>% glue())) %>%
-  # formatRound(c("Fenix 68", "Chrome 74"), 2) %>%
-  formatPercentage(c("ratio"))
-```
-
-## Conclusions
-
-1. **A Quantum Flow-like startup performance effort is needed.**  If Chrome can start navigating in less than 0.5s, so can we!
-
-1. Since the particular site makes almost no difference to the `navigationStartTime`, meaning that a few (or even one) representative site(s) is sufficient to measure and track regressions in the applink load time.  That will reduce the automation cost for regression testing.
-
-## Results
-
-### Raw data
-
-The data collected for the following tests is available:
-
-| run | device | folder |
-| --- | --- | --- |
-| 1 | Pixel 2 | XXX |
-
-### Processed data
-
-The data from the test runs above can be found in the following [CSV
-file](data/applink.csv).  The columns of the CSV are as follows:
-
-| column | description |
-| --- | --- |
-`device` | the target device, one of "Pixel 2", "Moto G5" |
-| `run` | the test run number |
-| `site` | the URL of the page being loaded |
-| `engine` | the tested engine's User Agent string |
-| `proxy` | "live" to signify the site was loaded from the live network |
-| `timestamp` | the local timestamp when the pageload was initiated |
-| `navigationStartTime` | the `window.performance.timeOrigin` reported by the engine under test, measured from the main process start time |
-| `pageLoadTime` | the [`loadEventStart`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceNavigationTiming/loadEventStart) timestamp reported by the engine under test, measured from the main process start time |
 
 ## Inter-vehicle reliability
 
@@ -412,8 +396,8 @@ The output of `adb shell getprop` for each device is available:
 
 | device |
 | --- |
-| [Pixel 2](Pixel 2.getprop) |
-| [Moto G5](Moto G5.getprop XXX) |
+| [Pixel 2](Pixel_2.getprop) |
+| [Moto G5](Moto_G5.getprop) |
 
 ### Software versions
 
@@ -426,3 +410,74 @@ The output of `adb shell getprop` for each device is available:
 | geckoview_example | N/A | https://queue.taskcluster.net/v1/task/EbHvScwDQBWnoYHJRwZphQ/artifacts/public%2Fbuild%2Fgeckoview_example.apk |
 | Fennec | 64.0.2 | http://archive.mozilla.org/pub/mobile/releases/64.0.2/android-api-16/multi/fennec-64.0.2.multi.android-arm.apk |
 | Chrome | 74.0.3729.112 | N/A |
+
+## Data
+
+### Raw data
+
+The data collected for the following tests is available:
+
+| run | device | folder |
+| --- | --- | --- |
+| 1 | Moto G5 | https://drive.google.com/open?id=19tYjLirGCTWzyp75RxC3W68Ftf0rhdd0 |
+| 2 | Moto G5 | https://drive.google.com/open?id=10mNf9yeqT_apryjjQg7bCEjdNPzcjV8s |
+| 3 | Pixel 2 | https://drive.google.com/open?id=1EMYcH9eswZikgkhRpcm124__mWISkGZL |
+| 4 | Pixel 2 | https://drive.google.com/open?id=1IZjT2stIJNyCIPVZhWKxXMXnYsehkIxw |
+
+### Processed data
+
+The data from the test runs above can be found in the following [CSV
+file](data/applink.csv).  The columns of the CSV are as follows:
+
+| column | description |
+| --- | --- |
+`device` | the target device, one of "Pixel 2", "Moto G5" |
+| `run` | the test run number |
+| `site` | the URL of the page being loaded |
+| `engine` | the tested engine's User Agent string |
+| `proxy` | "live" to signify the site was loaded from the live network |
+| `timestamp` | the local timestamp when the pageload was initiated |
+| `navigationStartTime` | the `window.performance.timeOrigin` reported by the engine under test, measured from the main process start time |
+| `pageLoadTime` | the [`loadEventStart`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceNavigationTiming/loadEventStart) timestamp reported by the engine under test, measured from the main process start time |
+
+### Fenix 68 vs Fennec 64 (in tabular form)
+
+```{r, echo=FALSE}
+f68_over_f64 <- complete %>%
+  filter(vehicle %in% c("Fenix 68", "Fennec 64")) %>%
+  group_by(run, device, site, vehicle) %>%
+  summarise(pageLoadTime_mean=round(mean(pageLoadTime))) %>%
+  ungroup() %>%
+  group_by(run, device, site) %>%
+  spread(vehicle, pageLoadTime_mean) %>%
+  ungroup()
+
+f68_over_f64$`ratio` = f68_over_f64$`Fenix 68` / f68_over_f64$`Fennec 64`
+
+datatable(arrange(f68_over_f64, ratio), options=list(dom='t', pageLength = nrow(f68_over_f64)),
+          fillContainer = FALSE,
+          caption=('Fenix applink pageload over Fennec 64 applink pageload (lower is better)' %>% glue())) %>%
+  # formatRound(c("Fenix 68", "Fennec 64"), 2) %>%
+  formatPercentage(c("ratio"))
+```
+
+### Fenix 68 vs Chrome 74 (in tabular form)
+
+```{r, echo=FALSE}
+f68_over_c74 <- complete %>%
+  filter(vehicle %in% c("Fenix 68", "Chrome 74")) %>%
+  group_by(run, device, site, vehicle) %>%
+  summarise(pageLoadTime_mean=round(mean(pageLoadTime))) %>%
+  ungroup() %>%
+  group_by(run, device, site) %>%
+  spread(vehicle, pageLoadTime_mean) %>%
+  ungroup()
+
+f68_over_c74$`ratio` = f68_over_c74$`Fenix 68` / f68_over_c74$`Chrome 74`
+
+datatable(arrange(f68_over_c74, ratio), options=list(dom='t', pageLength = nrow(f68_over_c74)),
+          fillContainer = FALSE,
+          caption=('Fenix applink pageload over Chrome applink pageload (lower is better)' %>% glue())) %>%
+  # formatRound(c("Fenix 68", "Chrome 74"), 2) %>%
+  formatPercentage(c("ratio"))
+```
